@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>HVAC System Builder Pro</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        :root { --brand-blue: #0087DC; --brand-cyan: #64D7D7; --brand-green: #B9EB5F; --bg-base: #f4f7f9; --bg-panel: #ffffff; --border-dark: #cbd5e1; }
+        body { margin: 0; font-family: sans-serif; display: flex; height: 100vh; overflow: hidden; background-color: var(--bg-base); }
+        #sidebar { width: 300px; background: var(--bg-panel); border-right: 1px solid var(--border-dark); padding: 15px; overflow-y: auto; }
+        #main { flex: 1; display: flex; flex-direction: column; }
+        #toolbar { height: 60px; background: var(--bg-panel); border-bottom: 1px solid var(--border-dark); display: flex; align-items: center; padding: 0 20px; gap: 10px; }
+        #workspace { flex: 1; position: relative; background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 20px 20px; }
+        .node { position: absolute; padding: 10px; cursor: move; width: 120px; text-align: center; background: white; border: 2px solid #ccc; border-radius: 8px; z-index: 10; }
+        .node input { width: 90%; text-align: center; border: none; font-weight: bold; color: var(--brand-blue); }
+        .static-id-text { display: none; font-weight: bold; color: var(--brand-blue); }
+        .version-control { display: flex; gap: 5px; margin-left: auto; align-items: center; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h3>設備庫</h3>
+        <button onclick="addNode('Chiller')">加入冰水機</button>
+        <button onclick="addNode('Pump-VS')">加入幫浦</button>
+    </div>
+    <div id="main">
+        <div id="toolbar">
+            <button onclick="startConnecting('cold')">連線 (冷)</button>
+            <button onclick="exportPNG()">輸出 PNG</button>
+            <div class="version-control">
+                <select id="save-slot">
+                    <option value="0">版本 1</option><option value="1">版本 2</option><option value="2">版本 3</option><option value="3">版本 4</option><option value="4">版本 5</option>
+                </select>
+                <input type="text" id="version-name" placeholder="名稱" style="width: 80px;">
+                <button onclick="saveVersion()">儲存</button>
+                <button onclick="loadVersion()">讀取</button>
+            </div>
+        </div>
+        <div id="workspace">
+            <svg id="svg-layer" style="width:100%; height:100%; position:absolute;"></svg>
+        </div>
+    </div>
+
+<script>
+    let nodes = [], pipelines = [], nodeIdCounter = 1;
+    let isConnecting = false, firstNode = null, currentPipeType = null;
+
+    function addNode(type, x = 100, y = 100, customId = null) {
+        const id = `node_${nodeIdCounter++}`;
+        const nodeObj = { id, type, customId: customId || `${type}_${nodeIdCounter-1}`, x, y };
+        nodes.push(nodeObj);
+        const div = document.createElement('div');
+        div.className = 'node'; div.id = id;
+        div.style.left = x + 'px'; div.style.top = y + 'px';
+        div.innerHTML = `<div>${type}</div><input value="${nodeObj.customId}"><span class="static-id-text">${nodeObj.customId}</span>`;
+        div.onmousedown = (e) => {
+            if(isConnecting) { handleNodeClick(id); return; }
+            let offsetX = e.clientX - div.offsetLeft, offsetY = e.clientY - div.offsetTop;
+            document.onmousemove = (me) => {
+                nodeObj.x = me.clientX - offsetX; nodeObj.y = me.clientY - offsetY;
+                div.style.left = nodeObj.x + 'px'; div.style.top = nodeObj.y + 'px';
+                drawPipelines();
+            };
+            document.onmouseup = () => document.onmousemove = null;
+        };
+        document.getElementById('workspace').appendChild(div);
+    }
+
+    function drawPipelines() {
+        const svg = document.getElementById('svg-layer');
+        svg.innerHTML = '';
+        pipelines.forEach((p, idx) => {
+            const el1 = document.getElementById(p.from), el2 = document.getElementById(p.to);
+            if(!el1 || !el2) return;
+            const x1 = el1.offsetLeft+60, y1 = el1.offsetTop+30, x2 = el2.offsetLeft+60, y2 = el2.offsetTop+30;
+            if(!p.wp) p.wp = {x: (x1+x2)/2, y: (y1+y2)/2};
+            
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', `M ${x1} ${y1} L ${p.wp.x} ${p.wp.y} L ${x2} ${y2}`);
+            path.setAttribute('stroke', p.type === 'cold' ? '#0087DC' : 'red');
+            path.setAttribute('stroke-width', '4'); path.setAttribute('fill', 'none');
+            svg.appendChild(path);
+
+            const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            anchor.setAttribute('cx', p.wp.x); anchor.setAttribute('cy', p.wp.y); anchor.setAttribute('r', '8');
+            anchor.setAttribute('fill', 'rgba(0,0,0,0.3)'); anchor.style.cursor = 'move';
+            anchor.onmousedown = (e) => {
+                document.onmousemove = (me) => {
+                    p.wp.x = me.clientX - document.getElementById('workspace').getBoundingClientRect().left;
+                    p.wp.y = me.clientY - document.getElementById('workspace').getBoundingClientRect().top;
+                    drawPipelines();
+                };
+                document.onmouseup = () => document.onmousemove = null;
+            };
+            svg.appendChild(anchor);
+        });
+    }
+
+    function startConnecting(type) { isConnecting = true; currentPipeType = type; }
+    function handleNodeClick(id) {
+        if(!firstNode) firstNode = id;
+        else { pipelines.push({from: firstNode, to: id, type: currentPipeType}); isConnecting = false; firstNode = null; drawPipelines(); }
+    }
+
+    function saveVersion() {
+        const slot = document.getElementById('save-slot').value;
+        const name = document.getElementById('version-name').value || "未命名";
+        localStorage.setItem('hvac_v'+slot, JSON.stringify({name, nodes, pipelines}));
+        alert('儲存成功');
+    }
+
+    function loadVersion() {
+        const data = JSON.parse(localStorage.getItem('hvac_v'+document.getElementById('save-slot').value));
+        if(!data) return;
+        document.querySelectorAll('.node').forEach(n => n.remove());
+        nodes = data.nodes; pipelines = data.pipelines;
+        nodes.forEach(n => addNode(n.type, n.x, n.y, n.customId));
+        drawPipelines();
+    }
+
+    function exportPNG() {
+        document.querySelectorAll('circle').forEach(c => c.style.display = 'none');
+        html2canvas(document.getElementById('workspace')).then(c => {
+            const link = document.createElement('a'); link.href = c.toDataURL(); link.download = 'export.png'; link.click();
+            document.querySelectorAll('circle').forEach(c => c.style.display = 'block');
+        });
+    }
+</script>
+</body>
+</html>
